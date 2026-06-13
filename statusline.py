@@ -18,7 +18,6 @@ from __future__ import annotations
 import json
 import os
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 
 # Model context window limits (input + cache_creation + cache_read).
@@ -50,11 +49,6 @@ BRED = "\033[91m"
 BWHITE = "\033[97m"
 BMAGENTA = "\033[95m"
 
-# Claude Pro/Max rolling usage window. Real reset is more complex
-# (per-message rolling), but elapsed-since-first-message is a reasonable
-# user-facing approximation: when it hits 0, the window has rolled.
-SESSION_WINDOW_SEC = 5 * 3600
-
 # Размер хвостового блока для last_usage(): читаем последние ~1МБ файла.
 _TAIL_BYTES = 1_048_576
 
@@ -65,48 +59,6 @@ def fmt_k(n: int) -> str:
     if n >= 1000:
         return f"{n // 1000}k"
     return str(n)
-
-
-def session_start(transcript_path: str) -> datetime | None:
-    """Return the earliest timestamp in the transcript JSONL, or None.
-
-    Records are appended chronologically, so the first record with a
-    `timestamp` field is the session start. Returns timezone-aware datetime.
-    """
-    if not transcript_path:
-        return None
-    p = Path(transcript_path)
-    if not p.exists():
-        return None
-    try:
-        with p.open("r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    obj = json.loads(line)
-                except ValueError:
-                    continue
-                ts = obj.get("timestamp")
-                if isinstance(ts, str):
-                    try:
-                        return datetime.fromisoformat(ts.replace("Z", "+00:00"))
-                    except ValueError:
-                        continue
-    except OSError:
-        return None
-    return None
-
-
-def fmt_duration(seconds: int) -> str:
-    if seconds <= 0:
-        return "0m"
-    h, rem = divmod(seconds, 3600)
-    m = rem // 60
-    if h > 0:
-        return f"{h}h{m:02d}m"
-    return f"{m}m"
 
 
 def shorten_model(model_id: str, display_name: str = "") -> str:
@@ -394,28 +346,29 @@ def main() -> None:
     model_label = shorten_model(model_id, model_display_raw)
     transcript = data.get("transcript_path", "")
 
-    start = session_start(transcript)
-    if start is not None:
-        age_sec = (datetime.now(timezone.utc) - start).total_seconds()
-        remaining = max(0, SESSION_WINDOW_SEC - int(age_sec))
-        reset_str = "OK" if remaining == 0 else fmt_duration(remaining)
+    # ── Контекст: АВТОДЕТЕКТ из stdin (Claude Code присылает реальный лимит и usage) ──
+    # context_window.context_window_size — настоящий лимит окна (1M/200k — авто, без таблиц
+    # и env). used/% берём оттуда же. Fallback на старый путь (таблица+транскрипт) для
+    # старых версий Claude Code без поля context_window.
+    cw = data.get("context_window") or {}
+    size = cw.get("context_window_size")
+    if isinstance(size, (int, float)) and size > 0:
+        limit = int(size)
+        used = int(cw.get("total_input_tokens") or 0)
+        p = cw.get("used_percentage")
+        pct = float(p) if isinstance(p, (int, float)) else (used / limit * 100.0 if limit else 0.0)
     else:
-        reset_str = "?"
-
-    limit = _resolve_limit(model_id, model_display_raw)
-
-    used = 0
-    u = last_usage(transcript)
-    if u is not None:
-        used = (
-            int(u.get("input_tokens", 0) or 0)
-            + int(u.get("cache_creation_input_tokens", 0) or 0)
-            + int(u.get("cache_read_input_tokens", 0) or 0)
-        )
-
-    pct = (used / limit * 100.0) if limit > 0 else 0.0
-    pct_clamped = min(pct, 999.0)
-    pct_int = int(round(pct_clamped))
+        limit = _resolve_limit(model_id, model_display_raw)
+        used = 0
+        u = last_usage(transcript)
+        if u is not None:
+            used = (
+                int(u.get("input_tokens", 0) or 0)
+                + int(u.get("cache_creation_input_tokens", 0) or 0)
+                + int(u.get("cache_read_input_tokens", 0) or 0)
+            )
+        pct = (used / limit * 100.0) if limit > 0 else 0.0
+    pct_int = int(round(min(pct, 999.0)))
 
     # Контекст — яркими жирными цифрами (без бара): бар отдан под прогресс задачи.
     if pct < 50:
@@ -428,8 +381,7 @@ def main() -> None:
     out = (
         f"{GREY}ctx{RESET} {BOLD}{cctx}{pct_int}%{RESET} "
         f"{BOLD}{BWHITE}{fmt_k(used)}/{fmt_k(limit)}{RESET} "
-        f"{GREY}·{RESET} {CYAN}{model_label}{RESET} "
-        f"{GREY}· reset {reset_str}{RESET}"
+        f"{GREY}·{RESET} {CYAN}{model_label}{RESET}"
         f"{ram_segment()}{task_segment(data.get('session_id', ''))}"
     )
     print(out, end="")

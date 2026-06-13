@@ -2,16 +2,15 @@
 
 A lightweight status line for [Claude Code](https://claude.ai/code) that shows:
 
-- **Context usage** — percentage and token counts vs model limit (colour-coded)
+- **Context usage** — percentage and token counts vs the real context-window limit (auto-detected, colour-coded)
 - **Active model** — short human-readable name
-- **Reset window** — time remaining in the 5-hour rolling usage window
 - **RAM** — free / total (Windows, Linux, macOS; no extra dependencies)
 - **Task progress bar** — for long-running operations via `task-bar.sh`
 
 Example output (rendered in terminal with ANSI colour):
 
 ```
-ctx 23% 46k/200k · sonnet-4.6 · reset 3h12m · 🧠 14.2/32G · ⏳ Build › compile ████████░░░░ 67% 2/3 ~45s
+ctx 23% 46k/200k · sonnet-4.6 · 🧠 14.2/32G · ⏳ Build › compile ████████░░░░ 67% 2/3 ~45s
 ```
 
 ---
@@ -94,18 +93,18 @@ If `CLAUDE_CODE_SESSION_ID` is set in the environment, the marker is bound to th
 
 ---
 
-## Environment variables
+## Context limit — auto-detected
 
-| Variable | Default | Description |
-|---|---|---|
-| `CLAUDE_STATUSLINE_OPUS_LIMIT` | `200000` | Context limit for opus models. Set to `1000000` if you have a 1M-context plan. |
-| `CLAUDE_STATUSLINE_CONTEXT_LIMIT` | — | Override context limit for **any** model. Takes priority over everything. |
+The real context-window size and usage are read **directly from the JSON Claude Code feeds on stdin** (`context_window.context_window_size`, `total_input_tokens`, `used_percentage`). No configuration needed — a 1M-context plan shows `/1.0M`, a standard plan `/200k`, automatically.
 
-Example — set a 1M opus limit in your shell profile:
+### Environment overrides (optional — legacy/fallback)
 
-```bash
-export CLAUDE_STATUSLINE_OPUS_LIMIT=1000000
-```
+Only needed on **older Claude Code versions** that don't send `context_window` on stdin (the script then falls back to a model→limit table + transcript parsing).
+
+| Variable | Description |
+|---|---|
+| `CLAUDE_STATUSLINE_OPUS_LIMIT` | Fallback context limit for opus models (default 200000). |
+| `CLAUDE_STATUSLINE_CONTEXT_LIMIT` | Fallback override for **any** model. |
 
 ---
 
@@ -123,13 +122,9 @@ The RAM segment is silently omitted on any unsupported OS or if the system call 
 
 ## How context % is computed
 
-The script reads the last `assistant` message in the session transcript JSONL and sums:
+Primary path: read straight from the `context_window` object Claude Code sends on stdin (`used_percentage`, `total_input_tokens`, `context_window_size`) — exact and zero-cost.
 
-```
-input_tokens + cache_creation_input_tokens + cache_read_input_tokens
-```
-
-Only the tail (~1 MB) of the transcript is read on each refresh — safe for long sessions with large files.
+Fallback (older Claude Code without `context_window`): read the last `assistant` message in the transcript JSONL and sum `input_tokens + cache_creation_input_tokens + cache_read_input_tokens`, against the model→limit table. Only the tail (~1 MB) of the transcript is read — safe for long sessions.
 
 ---
 
