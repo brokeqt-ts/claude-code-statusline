@@ -194,10 +194,12 @@ def ram_segment() -> str:
         else:
             return ""
 
+        used = max(0.0, tot - free)
+        # Занято/всего (как контекст-сегмент — использованное). Цвет по ОСТАТКУ свободной:
+        # красный <4ГБ свободно, жёлтый <8, иначе зелёный; "!" при критично низкой свободной.
         col = RED if free < 4 else (YELLOW if free < 8 else GREEN)
         warn = " !" if free < 4 else ""
-        # Явное "free", чтобы не путать со «занято» (контекст-сегмент показывает использованное).
-        return f" {GREY}·{RESET} {col}\U0001f9e0 {free:.1f}G free{warn}{RESET} {GREY}/{tot:.0f}G{RESET}"
+        return f" {GREY}·{RESET} {col}\U0001f9e0 {used:.1f}/{tot:.0f}G{warn}{RESET}"
     except Exception:
         return ""
 
