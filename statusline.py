@@ -196,7 +196,8 @@ def ram_segment() -> str:
 
         col = RED if free < 4 else (YELLOW if free < 8 else GREEN)
         warn = " !" if free < 4 else ""
-        return f" {GREY}·{RESET} {col}\U0001f9e0 {free:.1f}/{tot:.0f}G{warn}{RESET}"
+        # Явное "free", чтобы не путать со «занято» (контекст-сегмент показывает использованное).
+        return f" {GREY}·{RESET} {col}\U0001f9e0 {free:.1f}G free{warn}{RESET} {GREY}/{tot:.0f}G{RESET}"
     except Exception:
         return ""
 
