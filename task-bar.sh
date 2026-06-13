@@ -45,13 +45,15 @@ _now(){ date +%s; }
 
 # Записать JSON-маркер через python json.dumps: все значения передаются как аргументы,
 # строковая интерполяция в JSON-тело не используется — кавычки/бэкслеши/$ безопасны.
-# Аргументы: session_id label phase current total percent start_ts status
-# Пустая строка "" для числовых полей (current/total/percent/start_ts) = поле не включается.
+# Аргументы: session_id label phase current total percent start_ts status pid
+# Пустая строка "" для числовых полей (current/total/percent/start_ts/pid) = поле не включается.
+# pid (из $TASKBAR_PID): PID долгоживущего писателя; statusline скрывает бар, если он мёртв
+# (orphan/краш без `done`) — сразу, не ждать 15 мин. Пусто → старое поведение по давности.
 _write_marker(){
   $(_py) - "$@" <<'PYEOF'
 import sys, json
-# argv: sid label phase current total percent start_ts status
-sid, label, phase, current, total, percent, start_ts, status = sys.argv[1:9]
+# argv: sid label phase current total percent start_ts status pid
+sid, label, phase, current, total, percent, start_ts, status, pid = sys.argv[1:10]
 d = {"label": label, "phase": phase, "status": status}
 if sid:
     d["session_id"] = sid
@@ -63,9 +65,12 @@ if percent != "":
     d["percent"] = float(percent)
 if start_ts != "":
     d["start_ts"] = int(start_ts)
+if pid != "":
+    d["pid"] = int(pid)
 print(json.dumps(d, ensure_ascii=False), end='')
 PYEOF
 }
+TBPID="${TASKBAR_PID:-}"
 
 label="$(_get label)"; start="$(_get start_ts)"
 [ -z "${start:-}" ] && start="$(_now)"
@@ -73,18 +78,18 @@ label="$(_get label)"; start="$(_get start_ts)"
 case "$cmd" in
   start)
     label="${1:-task}"; phase="${2:-}"
-    _write_marker "$SID" "$label" "$phase" "" "" "" "$(_now)" "running" > "$F" ;;
+    _write_marker "$SID" "$label" "$phase" "" "" "" "$(_now)" "running" "$TBPID" > "$F" ;;
   set)
     phase="${1:-}"; cur="${2:-0}"; tot="${3:-0}"
-    _write_marker "$SID" "${label:-task}" "$phase" "$cur" "$tot" "" "$start" "running" > "$F" ;;
+    _write_marker "$SID" "${label:-task}" "$phase" "$cur" "$tot" "" "$start" "running" "$TBPID" > "$F" ;;
   pct)
     phase="${1:-}"; p="${2:-0}"
-    _write_marker "$SID" "${label:-task}" "$phase" "" "" "$p" "$start" "running" > "$F" ;;
+    _write_marker "$SID" "${label:-task}" "$phase" "" "" "$p" "$start" "running" "$TBPID" > "$F" ;;
   phase)
     phase="${1:-}"
-    _write_marker "$SID" "${label:-task}" "$phase" "" "" "" "$start" "running" > "$F" ;;
+    _write_marker "$SID" "${label:-task}" "$phase" "" "" "" "$start" "running" "$TBPID" > "$F" ;;
   warn|error)
-    _write_marker "$SID" "${label:-task} ${1:-}" "" "" "" "" "" "$cmd" > "$F" ;;
+    _write_marker "$SID" "${label:-task} ${1:-}" "" "" "" "" "" "$cmd" "$TBPID" > "$F" ;;
   done)
     rm -f "$F" ;;
   *)

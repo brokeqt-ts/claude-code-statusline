@@ -219,6 +219,38 @@ _STATUS_ICON = {"running": "⏳", "warn": "⚠", "error": "✗", "done": "✓"}
 _SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 
 
+def _pid_alive(pid) -> bool:
+    """Жив ли процесс-писатель маркера. None/неизвестно → True (не прячем бар зря).
+
+    Позволяет statusline убрать бар осиротевшего/упавшего писателя сразу (не ждать
+    15 мин), чтобы бар следующего процесса не был затенён мёртвым маркером.
+    """
+    if pid is None:
+        return True
+    try:
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return True
+    try:
+        import os
+        if os.name == "nt":
+            import ctypes
+            # OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION=0x1000); NULL → процесса нет
+            h = ctypes.windll.kernel32.OpenProcess(0x1000, False, pid)
+            if h:
+                ctypes.windll.kernel32.CloseHandle(h)
+                return True
+            return False
+        os.kill(pid, 0)
+        return True
+    except PermissionError:
+        return True  # процесс есть, но не наш
+    except OSError:
+        return False
+    except Exception:
+        return True
+
+
 def task_segment(session_id: str) -> str:
     """Прогресс-бар активной долгой задачи из ~/.claude/.statusline_task.
 
@@ -243,9 +275,11 @@ def task_segment(session_id: str) -> str:
         label, phase, status = "task", "", "running"
         cur = tot = pct = start_ts = None
         owner = None
+        writer_pid = None
         if raw.startswith("{"):
             d = _json.loads(raw)
             owner = d.get("session_id")
+            writer_pid = d.get("pid")
             label = str(d.get("label") or "task")
             phase = str(d.get("phase") or "")
             cur, tot = d.get("current"), d.get("total")
@@ -265,6 +299,10 @@ def task_segment(session_id: str) -> str:
 
         # session-привязка: маркер с чужим session_id не показываем в этой сессии
         if owner and session_id and str(owner) != str(session_id):
+            return ""
+
+        # писатель мёртв (orphan/краш без `done`) → убираем бар сразу, не ждём 15 мин
+        if not _pid_alive(writer_pid):
             return ""
 
         if pct is None and cur is not None and tot:
