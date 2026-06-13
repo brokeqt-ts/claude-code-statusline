@@ -121,6 +121,33 @@ on its own whenever it starts a long task. That is a behavioural rule, not code 
 your `CLAUDE.md` as described in [Installation Step 3](#3-enable-automatic-progress-bars-recommended).
 The ready-to-paste rule lives in [`progress-bar-rule.md`](progress-bar-rule.md).
 
+### Writing monitors — gotchas
+
+When a background **monitor** parses a long task's log and drives the bar each poll, a few
+sharp edges (learned the hard way):
+
+- **Start each new task with `start "<label>"`.** `set`/`pct`/`phase` *preserve* the existing
+  label (read back from the marker), so a stale label from a previous task's `error`/`done`
+  carries over. `start` resets it cleanly.
+- **One monitor at a time.** When you stop and relaunch a monitor, make sure the previous loop
+  is actually dead — killing a wrapper may leave the inner `bash monitor.sh` loop orphaned, and
+  two live writers fight over the single marker → flicker. Kill the loop process explicitly.
+- **Multi-phase tasks: use one cross-phase percent**, not per-subphase counts. A job with
+  several stages (e.g. two build passes + training epochs + export) that feeds `set N M` per
+  stage hits 100% repeatedly and looks stuck/finished. Map stages to a single monotonic `pct`
+  instead; inside an open-ended stage (training), show a liveness token (epoch number) rather
+  than a fake total.
+- **Verify the render, not just the write.** Import `statusline.py` and call
+  `task_segment(session_id)` to see the actual bar string.
+
+### Marker freshness & dead-writer cleanup
+
+The marker JSON may include an optional `pid` — the long-lived writer's PID, passed via the
+`TASKBAR_PID` env var. `statusline.py` hides the bar when that PID is dead **and** the marker
+is stale (>45 s without an update) — so an orphaned or crashed writer's bar disappears quickly
+instead of lingering the full 15-minute TTL, while a live writer that refreshes every ≤25 s
+always shows. Markers written without a `pid` fall back to the plain 15-minute staleness rule.
+
 ---
 
 ## Context limit — auto-detected
