@@ -1,0 +1,3 @@
+.statusline_task
+__pycache__/
+*.pyc
