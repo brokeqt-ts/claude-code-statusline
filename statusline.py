@@ -266,7 +266,10 @@ def task_segment(session_id: str) -> str:
     try:
         import time, json as _json
         p = Path.home() / ".claude" / ".statusline_task"
-        if not p.exists() or time.time() - p.stat().st_mtime > 900:
+        if not p.exists():
+            return ""
+        age = time.time() - p.stat().st_mtime
+        if age > 900:
             return ""
         raw = p.read_text(encoding="utf-8").strip()
         if not raw:
@@ -301,8 +304,10 @@ def task_segment(session_id: str) -> str:
         if owner and session_id and str(owner) != str(session_id):
             return ""
 
-        # писатель мёртв (orphan/краш без `done`) → убираем бар сразу, не ждём 15 мин
-        if not _pid_alive(writer_pid):
+        # писатель мёртв И маркер устарел (>45с без обновлений) → orphan/краш, убираем.
+        # Только pid недостаточно: под обёртками $$ пишет иногда чужой pid, а живой
+        # писатель обновляет mtime каждые ≤25с — свежий маркер показываем всегда.
+        if age > 45 and not _pid_alive(writer_pid):
             return ""
 
         if pct is None and cur is not None and tot:
